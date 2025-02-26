@@ -26,6 +26,7 @@ from .config import settings
 from .prometheus import setup_prometheus, MODEL_LATENCY
 from .middleware import monitoring_middleware
 
+# Structlog configuration
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
@@ -34,11 +35,13 @@ structlog.configure(
 )
 logger = structlog.get_logger("api")
 
+# FastAPI app initialization
 app = FastAPI()
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins.split(","),
@@ -47,16 +50,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Monitoring middleware
 app.middleware("http")(monitoring_middleware)
+
+# Prometheus setup
 setup_prometheus(app)
 
+# Singleton model instance
 model = SingletonModel()
 
+# Pydantic model for prediction request
 class PredictionRequest(BaseModel):
     question: str
     is_philosophy_related: bool
     metadata: dict | None = None
 
+# Root endpoint
 @app.get("/")
 def read_root():
     return {
@@ -64,14 +73,15 @@ def read_root():
         "author": "Bekali Aslonov"
     }
 
+# Prediction endpoint
 @app.post("/predict")
 @limiter.limit("100/hour")
 async def predict(request: Request, data: PredictionRequest):
     start_time = time.time()
     try:
-        loop = asyncio.get_event_loop()
+        # Use the new predict_async method from SingletonModel
         result = await asyncio.wait_for(
-            loop.run_in_executor(model._executor, model.predict, data.dict()),
+            model.predict_async(data.dict()),
             timeout=settings.model_timeout,
         )
         duration = time.time() - start_time
@@ -95,6 +105,7 @@ async def predict(request: Request, data: PredictionRequest):
         logger.error("prediction_failed", error=str(e), duration=duration)
         raise HTTPException(500, "Internal server error")
 
+# Health check endpoint
 @app.get("/health")
 async def health():
     logger.debug("health_check")
